@@ -1,0 +1,130 @@
+# import modules
+import os
+import rasterio
+from rasterio.transform import from_origin
+import numpy as np
+from geopy.distance import geodesic
+from scipy.spatial import cKDTree
+from scipy.ndimage import maximum_filter, label
+from scipy.ndimage import generic_filter
+print('modules imported')
+
+# establish paths
+root = "H:/Emma/ASOML/"
+outputWorkspace = root + "data/phv_features/"
+DEM = root + r"data/phv_features/ASOML_SNM_dem.tif"
+print("paths established")
+
+print("Creating slope and aspect...")
+outSlope = outputWorkspace + "ASOML_SNM_slope.tif"
+outAspect = outputWorkspace + "ASOML_SNM_aspect.tif"
+with rasterio.open(DEM) as dem_src:
+    dem = dem_src.read(1)
+    transform = dem_src.transform
+    x_res = transform[0]
+    y_res = -transform[4]
+    
+    # calculate gradients for slope and aspect
+    dx, dy = np.gradient(dem, x_res, y_res)
+    slope = np.arctan(np.sqrt(dx**2 + dy**2) * (180/np.pi))
+    aspect = np.arctan2(-dy, -dx) * (180 / np.pi)
+    aspect = (aspect + 360) % 360
+    
+    # set up metadata for slope in degrees
+    slope_meta = dem_src.meta.copy()
+    slope_meta.update(dtype=rasterio.float32)
+    print("slope calculated")
+    
+    # set up meta data for aspect
+    aspect_meta = dem_src.meta.copy()
+    aspect_meta.update(dtype=rasterio.float32)
+
+# save slope
+with rasterio.open(outSlope, 'w', **slope_meta) as slope_dst:
+    slope_dst.write(slope.astype(rasterio.float32), 1)
+print("slope saved")
+
+# save aspect
+with rasterio.open(outAspect, 'w', **aspect_meta) as aspect_dst:
+    aspect_dst.write(aspect.astype(rasterio.float32), 1)
+print("aspect saved")
+
+## creating lon and lat files
+outLat = outputWorkspace + "ASOML_SNM_lat.tif"
+outLon = outputWorkspace + "ASOML_SNM_lon.tif"
+print("Creating lon and lat layers...")
+with rasterio.open(DEM) as src:
+    profile = src.profile
+    width = profile['width']
+    height = profile['height']
+    transform_matrix = src.transform
+    print("dem read in")
+
+# Generate empty arrays to store x and y coordinates in Albers
+x_coords = np.empty((height, width), dtype=np.float32)
+y_coords = np.empty((height, width), dtype=np.float32)
+print("arrays created")
+
+# Loop through each cell in the raster
+for row in range(height):
+    for col in range(width):
+        x, y = transform_matrix * (col, row)
+        x_coords[row, col] = x
+        y_coords[row, col] = y
+
+# Save the x-coordinates raster
+x_profile = profile.copy()
+x_profile.update(dtype='float32', count=1)
+print("profile updated")
+                   
+with rasterio.open(outLon, 'w', **x_profile) as dst:
+    dst.write(x_coords, 1)
+print("lon finished")
+
+# Save the y-coordinates raster
+y_profile = profile.copy()
+y_profile.update(dtype='float32', count=1)
+print("profile updated")
+
+with rasterio.open(outLat, 'w', **y_profile) as dst:
+    dst.write(y_coords, 1)
+print("lat finished")
+print("Lat and lon files created")
+
+# Define a function to compute the standard deviation
+def calc_std(values):
+    return np.std(values)
+
+# Path to the slope raster
+input_slope_raster = "H:/Emma/ASOML/data/phv_features/ASOML_SNM_slope_deg.tif"
+output_std_raster = "H:/Emma/ASOML/data/phv_features/ASOML_SNM_slope_std.tif"
+
+# Open the slope raster
+with rasterio.open(input_slope_raster) as src:
+    slope = src.read(1)  # Read the slope data as a NumPy array
+    profile = src.profile  # Get the profile of the raster
+    nodata = src.nodata
+    print("data in")
+    # Handle NoData values by masking them
+    slope[slope == nodata] = np.nan
+
+    # Apply the standard deviation calculation with a 3x3 moving window
+    std_slope = generic_filter(
+        slope,
+        function=calc_std,
+        size=3,  # 3x3 window
+        mode="constant",
+        cval=np.nan,
+    )
+    print("data in_std")
+    # Replace NaN back with the NoData value
+    std_slope[np.isnan(std_slope)] = nodata
+
+    # Update the profile for the output raster
+    profile.update(dtype=rasterio.float32, nodata=nodata)
+
+    # Write the result to a new raster
+    with rasterio.open(output_std_raster, "w", **profile) as dst:
+        dst.write(std_slope.astype(rasterio.float32), 1)
+
+print(f"Standard deviation raster saved to {output_std_raster}")
