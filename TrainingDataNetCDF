@@ -1,0 +1,72 @@
+# import modules
+import pandas
+import tensorflow
+import rasterio
+from rasterio.mask import mask
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn
+import os
+import xarray as xr
+from shapely.geometry import box
+
+root = "H:/Emma/ASOML/"
+trainingData = root +"ASO_processed/training/SNM/"
+featureWorkspace = root + "data/phv_features/finalFeatures/"
+years = list(range(2013, 2014))
+print("workspace established")
+
+# next I am going to test to see if I can create numpy arrays for the training set 
+for year in years:
+    trainingDataSet = f"{trainingData}{year}/outSplits/"
+    trainings = [f for f in os.listdir(trainingDataSet) if f.endswith(".TIF") and os.path.isfile(os.path.join(trainingDataSet, f))]
+    feat_names = ["SWE"]
+    features = []
+    for feature in os.listdir(featureWorkspace):
+        if feature.endswith(".tif"):
+            features.append(os.path.join(featureWorkspace, feature))
+            feat_names.append(feature[:-4])
+
+    # get the canopy cover for the year of the training data
+    vegLayers = featureWorkspace + "vegLayers/"
+    for veg in os.listdir(vegLayers):
+        if veg.endswith(".tif"):
+            if veg.startswith(str(year)):
+                features.append(os.path.join(featureWorkspace + "vegLayers/", veg))
+                feat_names.append(veg[:-4])
+                
+    # set dataset for netcdf            
+    print(year)
+    for training in trainings:
+        # loop though the phv variables
+        with rasterio.open(trainingDataSet + training) as train_src:
+            train_data = train_src.read(1)
+            train_extent = train_src.bounds
+            train_transform = train_src.transform
+            train_crs = train_src.crs
+            print("data opened")
+            
+            clipped_rasters = {}
+            clipped_rasters["SWE"] = train_data
+            reference_poly = box(train_extent[0], train_extent[1], train_extent[2], train_extent[3]) 
+                # loop through variabels
+            for feat, feat_name in zip(features, feat_names[1:]):
+                with rasterio.open(feat) as ft_src:
+                    out_image, out_transform = mask(train_src, [reference_poly], crop=True)
+                    clipped_rasters[feat_name] = out_image[0]
+
+            nrows, ncols = out_image.shape[1], out_image.shape[2]
+            x_coords = np.arange(ncols) * out_transform.a + out_transform.c
+            y_coords = np.arange(nrows) * out_transform.e + out_transform.f
+
+            data_vars = {feat_name: (['y', 'x'], data) for feat_name, data in clipped_rasters.items()}
+            coords = {'y': y_coords, 'x': x_coords,}
+
+            ds = xr.Dataset(data_vars=data_vars, coords=coords)
+            ds.attrs['crs'] = train_crs.to_string()
+            ds.attrs['transform'] = tuple(out_transform)
+
+            out_nc = f"H:/Emma/ASOML/ASO_processed/training/SNM/Training_NetCDF/{training[:-4]}.nc"
+            ds.to_netcdf(out_nc)
+#             print(f"NetCDF saved to {out_nc}")
+                    
