@@ -1,6 +1,9 @@
+# This script created terrain variables for all features. This was a combination of rasterio and arcpy code. 
+
 # import modules
 import os
 import rasterio
+import arcpy
 from rasterio.transform import from_origin
 import numpy as np
 from geopy.distance import geodesic
@@ -14,6 +17,35 @@ root = "H:/Emma/ASOML/"
 outputWorkspace = root + "data/phv_features/"
 DEM = root + r"data/phv_features/ASOML_SNM_dem.tif"
 print("paths established")
+
+### ARCPY CODE ###
+# VRM layer
+arcpy.ImportToolbox(r"C:\Users\Emma Tyrrell\OneDrive\Documents\INSTAAR\ASOML\ASOML.atbx")
+arcpy.archydropro.vectorruggednessmeasurement(
+    Input_Elevation_Raster="ASOML_SNM_dem.tif",
+    Neighborhood_Distance="100 Meters",
+    Window_Size=3,
+    Output_Raster=r"H:\Emma\ASOML\data\phv_features\ASOML_SNM_VRM.tif"
+)
+
+# TPI layer
+arcpy.ImportToolbox(r"C:\Users\Emma Tyrrell\OneDrive\Documents\INSTAAR\ASOML\ASOML.atbx")
+arcpy.archydropro.TopographicPositionIndex(
+    Input_DEM="ASOML_SNM_dem.tif",
+    Model_Type="Square",
+    Length=3,
+    Output_TPI_Raster=r"H:\Emma\ASOML\data\phv_features\ASOML_SNM_TPI_esri.tif"
+)
+
+# curvature
+with arcpy.EnvManager(snapRaster="SnapRaster_albn83_50m.tif", scratchWorkspace=r"H:\Emma\ASOML\data\phv_features"):
+    out_curvature_raster = arcpy.sa.Curvature(
+        in_raster="ASOML_SNM_dem.tif",
+        z_factor=1,
+        out_profile_curve_raster=None,
+        out_plan_curve_raster=None
+    )
+    out_curvature_raster.save(r"H:\Emma\ASOML\data\phv_features\ASOML_SNM_curv_max.tif")
 
 print("Creating slope and aspect...")
 outSlope = outputWorkspace + "ASOML_SNM_slope.tif"
@@ -91,16 +123,17 @@ with rasterio.open(outLat, 'w', **y_profile) as dst:
 print("lat finished")
 print("Lat and lon files created")
 
-# Define a function to compute the standard deviation
+
+#### CREATE STANDARD DEVIATION RASTERS
+# function for STD
 def calc_std(values):
     return np.std(values)
 
-# Path to the slope raster
-input_slope_raster = "H:/Emma/ASOML/data/phv_features/ASOML_SNM_slope_deg.tif"
-output_std_raster = "H:/Emma/ASOML/data/phv_features/ASOML_SNM_slope_std.tif"
+input_raster = "H:/Emma/ASOML/data/phv_features/ASOML_SNM_dem.tif"
+output_std_raster = "H:/Emma/ASOML/data/phv_features/ASOML_SNM_elev_std.tif"
 
-# Open the slope raster
-with rasterio.open(input_slope_raster) as src:
+# open raster
+with rasterio.open(input_raster) as src:
     slope = src.read(1)  # Read the slope data as a NumPy array
     profile = src.profile  # Get the profile of the raster
     nodata = src.nodata
@@ -108,7 +141,7 @@ with rasterio.open(input_slope_raster) as src:
     # Handle NoData values by masking them
     slope[slope == nodata] = np.nan
 
-    # Apply the standard deviation calculation with a 3x3 moving window
+    # calculate std
     std_slope = generic_filter(
         slope,
         function=calc_std,
@@ -117,14 +150,49 @@ with rasterio.open(input_slope_raster) as src:
         cval=np.nan,
     )
     print("data in_std")
-    # Replace NaN back with the NoData value
+    # replace NaN back 
     std_slope[np.isnan(std_slope)] = nodata
 
-    # Update the profile for the output raster
+    # update the profile
     profile.update(dtype=rasterio.float32, nodata=nodata)
 
-    # Write the result to a new raster
+    # write out raster
     with rasterio.open(output_std_raster, "w", **profile) as dst:
         dst.write(std_slope.astype(rasterio.float32), 1)
 
 print(f"Standard deviation raster saved to {output_std_raster}")
+
+# do maximum curvature 
+input_raster = "H:/Emma/ASOML/data/phv_features/ASOML_SNM_curv_max.tif"
+output_std_raster = "H:/Emma/ASOML/data/phv_features/ASOML_SNM_curvmax_std.tif"
+
+# open raster
+with rasterio.open(input_raster) as src:
+    slope = src.read(1)  # Read the slope data as a NumPy array
+    profile = src.profile  # Get the profile of the raster
+    nodata = src.nodata
+    print("data in")
+    # Handle NoData values by masking them
+    slope[slope == nodata] = np.nan
+
+    # calculate std
+    std_slope = generic_filter(
+        slope,
+        function=calc_std,
+        size=3,  # 3x3 window
+        mode="constant",
+        cval=np.nan,
+    )
+    print("data in_std")
+    # replace NaN back 
+    std_slope[np.isnan(std_slope)] = nodata
+
+    # update the profile
+    profile.update(dtype=rasterio.float32, nodata=nodata)
+
+    # write out raster
+    with rasterio.open(output_std_raster, "w", **profile) as dst:
+        dst.write(std_slope.astype(rasterio.float32), 1)
+
+print(f"Standard deviation raster saved to {output_std_raster}")
+
