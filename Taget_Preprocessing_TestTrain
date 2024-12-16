@@ -1,0 +1,120 @@
+# import modules, this is for the testing data but this script was also used for the training data 
+import arcpy
+import rasterio
+import os
+import numpy as np
+from arcpy.sa import *
+
+print("modules imported")
+
+
+# establish paths
+root = r"H:/Emma/ASOML/"
+nonProcessed = "H:/Emma/ASOML/ASO_noProcessing/potentialTesting/Group6/"
+processed = "H:/Emma/ASOML/ASO_processed/test_tiles/Group6/"
+snapRaster = r"H:/Emma/ASOML/data/SnapRaster_albn83_50m.tif"
+projOut = arcpy.SpatialReference(102039)
+# years = list(range(2023, 2025))
+arcpy.env.workspace = nonProcessed
+files = arcpy.ListFiles()
+goodList = []
+flaggedList = []
+deletesList = []
+zeroList = []
+GroupNo = "Group4"
+test_train = "test"
+# test = f"H:/Emma/ASOML/ASO_processed/test_tiles/{GroupNo}/ASO_LowerPit_2023Feb12-12_swe_50m_albn83.tif"
+rasters = [f"H:/Emma/ASOML/ASO_processed/test_tiles/{GroupNo}/ASO_UpperPit_2023Feb08-10_swe_50m_albn83.tif",
+           f"H:/Emma/ASOML/ASO_processed/test_tiles/{GroupNo}/ASO_SacramentoMcCloud_2023Feb09-11_swe_50m_albn83.tif"]
+rast = ["ASO_UpperPit_2023Feb08-10_swe_50m_albn83", "ASO_SacramentoMcCloud_2023Feb09-11_swe_50m_albn83"]
+outTiles = f"H:/Emma/ASOML/ASO_processed/training/SNM/2013/outSplits_v2/"
+# print(" ")
+arcpy.env.snapRaster = snapRaster
+arcpy.env.cellSize = snapRaster
+for raster, ras in zip(rasters, rast):
+    arcpy.SplitRaster_management(raster, outTiles, ras, "SIZE_OF_TILE",
+                                 "TIFF", "NEAREST", "", "128 128", "0", "PIXELS")
+    print("file done")
+
+# # get out of rasters that have no data values
+print("removing no data values and bad training data ... ")
+totalCount = (128 * 128)
+outSplits = outTiles
+for file in os.listdir(outSplits):
+    if not file.endswith("TIF"):
+        intermed = os.path.join(outSplits, file)
+        deletesList.append(intermed)
+    else:
+        raster_path = os.path.join(outSplits, file)
+        with rasterio.open(raster_path) as src:
+            data = src.read(1)
+            nodata_value = src.nodata
+            if nodata_value is not None and not np.isnan(nodata_value):
+                nodata_count = np.sum(data == nodata_value)
+            else:
+                nodata_count = np.sum(np.isnan(data))
+
+            no_data_percent = (nodata_count / totalCount) * 100
+            max_value = data.max()
+            if max_value <= 0:
+                #print("all zero file removed")
+                zeroList.append(raster_path)
+            else:
+                goodList.append(raster_path)
+                #print(f"added to good list")
+            # check to see if there is a difference  -- NEED TO ADD FOR FINAL CODE
+print(" ")
+print("list of data for training:")
+print(len(goodList))
+print("list of data for exclusion:")
+print(int(len(flaggedList) + len(zeroList)))
+for flag in flaggedList:
+    if os.path.exists(flag):
+        os.remove(flag)
+for delete in deletesList:
+    if os.path.exists(delete):
+        os.remove(delete)
+for zero in zeroList:
+    if os.path.exists(zero):
+        os.remove(zero)
+print("flagged files deleted")
+
+oldList = []
+newList = []
+# path = outTiles
+arcpy.env.workspace = outTiles
+# print(path)
+files = arcpy.ListFiles()
+for file in files:
+    if file.endswith(".TIF"):
+        print(file)
+        oldList.append(file)
+        neg = Con(IsNull(Raster(file)), -1, Raster(file))
+        neg.save(outTiles + f"{file[:-4]}_neg.tif")
+        print(file + " saved")
+        newList.append(f"{file[:-4]}_neg.tif")
+        arcpy.Delete_management(file)
+        print(file + " deleted")
+print("length of old = " + str(len(oldList)))
+print("length of new = " + str(len(newList)))
+
+folder_path = outTiles
+non_128_files = []
+# Loop through all files in the folder
+for file_name in os.listdir(folder_path):
+    if file_name.endswith(".tif"):
+        # print(file_name)
+        file_path = os.path.join(folder_path, file_name)
+        try:
+            # Open the .tif file and check its dimensions
+            with rasterio.open(file_path) as src:
+                rows, cols = src.shape
+                if rows != 128 or cols != 128:
+                    non_128_files.append(file_path)
+        except Exception as e:
+            print(f"Error processing {file_path}: {e}")
+print(len(non_128_files))
+
+files = os.listdir(outTiles) # List all items in the directory
+num_files = len([f for f in files if f.endswith(".tif") and os.path.isfile(os.path.join(folder_path, f))])
+print(num_files)
